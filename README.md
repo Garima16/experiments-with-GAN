@@ -1,1 +1,1 @@
-# experiments-with-GAN
+# Experiments with GAN using MNIST dataset
