@@ -40,3 +40,35 @@ class Generator(nn.Module):
 
         return output
 
+
+class Discriminator(nn.Module):
+    def __init__(self):
+        super(Discriminator, self).__init__()
+
+        # input size: (1, 28, 28)
+
+        self.convT = nn.Sequential(
+            nn.ConvTranspose2d(in_channels=1,
+                               out_channels=64,
+                               kernel_size=4,
+                               stride=2,
+                               padding=1),
+            nn.LeakyReLU(negative_slope=0.1, inplace=True),
+            # output size: (64, 14, 14)
+
+            nn.ConvTranspose2d(in_channels=64,
+                               out_channels=128,
+                               kernel_size=4,
+                               stride=2,
+                               padding=1),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(negative_slope=0.1, inplace=True),
+            # output size: (128, 7, 7)
+        )
+
+        self.fc = nn.Sequential(
+            nn.Linear()
+        )
+
+    def forward(self, x):
+        pass
