@@ -7,7 +7,7 @@ import torchvision.transforms as transforms
 import torchvision.utils as vutils
 
 
-def load_data(dataroot, img_size, bs, workers, dset_name='mnist'):
+def load_data(dataroot, img_size, bs, workers=1, dset_name='mnist'):
     """
     Create dataloader from data of given bs and transform images
     :param dataroot:
@@ -157,3 +157,15 @@ def plot_losses(g_losses, d_losses):
     plt.ylabel("Loss")
     plt.legend()
     plt.show()
+
+
+def total_parameters(model):
+    """
+    Find total parameters(trainable or non-trainable) of a model.
+    :param model:
+    :return: no. of parameters
+    """
+    params = 0
+    for param in model.parameters():
+        params += param.numel()  # this fn returns total parameters in this specific param category
+    return params
