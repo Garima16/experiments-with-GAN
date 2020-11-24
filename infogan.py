@@ -1,4 +1,5 @@
 import numpy as np
+import os
 import torch.optim as optim
 import torch
 import torch.nn as nn
@@ -12,11 +13,11 @@ class Generator(nn.Module):
 
         self.fc = nn.Sequential(
             nn.Linear(in_features=latent_var_size, out_features=1024),
-            nn.BatchNorm2d(1024),
+            nn.BatchNorm1d(1024),
             nn.ReLU(),
 
             nn.Linear(in_features=1024, out_features=128 * 7 * 7),
-            nn.BatchNorm2d(128 * 7 * 7),
+            nn.BatchNorm1d(128 * 7 * 7),
             nn.ReLU(),
         )
 
@@ -39,7 +40,8 @@ class Generator(nn.Module):
         )
 
     def forward(self, x):
-        fc_out = self.fc(x)
+        print("in G, x size: ", x.size())
+        fc_out = self.fc(x.float())
         fc_out = fc_out.view(-1, 128, 7, 7)
         output = self.conv(fc_out)
 
@@ -52,21 +54,22 @@ class SharedNetwork(nn.Module):
         super(SharedNetwork, self).__init__()
 
         # input size: (1, 28, 28)
-
-        self.convT = nn.Sequential(
-            nn.ConvTranspose2d(in_channels=1,
-                               out_channels=64,
-                               kernel_size=4,
-                               stride=2,
-                               padding=1),
-            nn.LeakyReLU(negative_slope=0.1, inplace=True),
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_channels=1,
+                      out_channels=64,
+                      kernel_size=4,
+                      stride=2,
+                      padding=1),
+            nn.LeakyReLU(negative_slope=0.1, inplace=True)
+        )
+        self.conv2 = nn.Sequential(
             # output size: (64, 14, 14)
 
-            nn.ConvTranspose2d(in_channels=64,
-                               out_channels=128,
-                               kernel_size=4,
-                               stride=2,
-                               padding=1),
+            nn.Conv2d(in_channels=64,
+                      out_channels=128,
+                      kernel_size=4,
+                      stride=2,
+                      padding=1),
             nn.BatchNorm2d(128),
             nn.LeakyReLU(negative_slope=0.1, inplace=True),
             # output size: (128, 7, 7)
@@ -75,14 +78,20 @@ class SharedNetwork(nn.Module):
         self.fc = nn.Sequential(
             nn.Linear(in_features=128 * 7 * 7,
                       out_features=1024),
-            nn.BatchNorm2d(1024),
+            nn.BatchNorm1d(1024),
             nn.LeakyReLU(negative_slope=0.1, inplace=True)
         )
 
     def forward(self, x):
-        out = self.convT(x)
+        # print("input size: ", x.size())
+        out = self.conv1(x)
+        # print("shared network conv1 size: ", out.size())
+        out = self.conv2(out)
+        # print("shared network conv2 size: ", out.size())
+        out = out.view(-1, 128 * 7 * 7)
+        # print("shared network conv2 size: ", out.size())
         out = self.fc(out)
-
+        # print("shared network fc size: ", out.size())
         return out
 
 
@@ -92,7 +101,7 @@ class RecognitionNetwork(nn.Module):
         self.fc = nn.Sequential(
             nn.Linear(in_features=1024,
                       out_features=128),
-            nn.BatchNorm2d(128),
+            nn.BatchNorm1d(128),
             nn.LeakyReLU(negative_slope=0.1, inplace=True)
         )
 
@@ -104,15 +113,11 @@ class RecognitionNetwork(nn.Module):
         self.cont_codes_var = nn.Linear(in_features=128, out_features=cont_codes_size)
 
     def forward(self, x):
-        shared_nw_obj = SharedNetwork()
-        shared_nw_out = shared_nw_obj(x)
-
-        cat_codes = F.softmax(self.cat_codes(self.fc(shared_nw_out)))
-
-        cont_codes_mu = self.cont_codes_mu(self.fc(shared_nw_out)).squeeze()
+        cat_codes = F.softmax(self.cat_codes(self.fc(x)), dim=1)
+        cont_codes_mu = self.cont_codes_mu(self.fc(x)).squeeze()
 
         # taking exponent, so that variance is positive
-        cont_codes_var = self.cont_codes_var(self.fc(shared_nw_out)).squeeze().exp()
+        cont_codes_var = self.cont_codes_var(self.fc(x)).squeeze().exp()
 
         return cat_codes, cont_codes_mu, cont_codes_var
 
@@ -121,17 +126,12 @@ class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()
 
-        self.last = nn.Sequential(
-            nn.Linear(in_features=1024,
-                      out_features=1),
-            nn.Sigmoid()
-        )
+        self.last = nn.Linear(in_features=1024, out_features=1)
 
     def forward(self, x):
-        shared_nw_obj = SharedNetwork()
-        shared_nw_out = shared_nw_obj(x)
-        disc_out = self.last(shared_nw_out)
-
+        # print("input size to D: ", x.size())
+        disc_out = torch.sigmoid(self.last(x))
+        # print("discriminator output size: ", disc_out.size())
         return disc_out
 
 
@@ -140,13 +140,14 @@ class LogGaussian(object):
     # this method will be called on an instance of this class, by passing params to the instance
     def __call__(self, x, mu, var):
         # taking log of Gaussian distribution
-        log_likelihood = -0.5 * (var.mul(2 * np.pi) + 1e-6).log - \
+        log_likelihood = -0.5 * (var.mul(2 * np.pi) + 1e-6).log() - \
                          (x - mu).pow(2).div(var.mul(2) + 1e-6)
         return log_likelihood.sum(1).mean().mul(-1)
 
 
 class InfoGAN(object):
-    def __init__(self, noise_dim, disc_codes_dim, cont_code1_dim, cont_code2_dim, bs, image_size, epochs):
+    def __init__(self, noise_dim, disc_codes_dim, cont_code1_dim, cont_code2_dim, bs, image_size, epochs, dis_lr,
+                 gen_lr):
 
         # generator_net = Generator().to(self.device)
         # self.discriminator_net = Discriminator().to(self.device)
@@ -157,6 +158,8 @@ class InfoGAN(object):
         self.image_size = image_size
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.epochs = epochs
+        self.dis_lr = dis_lr  # D's learning rate
+        self.gen_lr = gen_lr  # G's learning rate
 
         self.noise_dim = noise_dim
         self.disc_codes_dim = disc_codes_dim
@@ -186,11 +189,13 @@ class InfoGAN(object):
     def train(self, dataloader, discriminator_net, generator_net, recognition_net, shared_net, img_save_filepath):
         # real_x = torch.FloatTensor(self.bs, 1, self.image_size, self.image_size).to(self.device)
 
+        torch.autograd.set_detect_anomaly(True)
+
         # optimizers
         optimG = optim.Adam([{'params': generator_net.parameters()}, {'params': recognition_net.parameters()}],
-                            lr=0.001, betas=(0.5, 0.999))
+                            lr=self.gen_lr, betas=(0.5, 0.999))
         optimD = optim.Adam([{'params': discriminator_net.parameters()}, {'params': shared_net.parameters()}],
-                            lr=0.0002, betas=(0.5, 0.999))
+                            lr=self.dis_lr, betas=(0.5, 0.999))
 
         noise = torch.FloatTensor(self.bs, self.noise_dim).to(self.device)
         disc_code = torch.FloatTensor(self.bs, self.disc_codes_dim).to(self.device)
@@ -199,16 +204,19 @@ class InfoGAN(object):
         real_label = 1
         fake_label = 0
 
-        # fixed random variables, to generate same image after every specific number of iterations
+        # fixed random variables, to generate same 100 images after every specific number of iterations
         c = np.linspace(start=-1, stop=1, num=10).reshape(1, -1)
         c = np.repeat(c, 10, 0).reshape(-1, 1)
-        c1 = np.hstack([c, np.zeros_like(c)])
-        c2 = np.hstack([np.zeros_like(c), c])
+        c1 = torch.from_numpy(np.hstack([c, np.zeros_like(c)]))
+        c2 = torch.from_numpy(np.hstack([np.zeros_like(c), c]))
         idx = np.arange(10).repeat(10)
-        one_hot = np.zeros((100, 10))
+        one_hot = torch.from_numpy(np.zeros((100, 10)))
         one_hot[range(100), idx] = 1
-        fix_noise = torch.Tensor(100, 62).uniform_(-1, 1)
-
+        fix_noise = torch.Tensor(100, self.noise_dim).uniform_(-1, 1)
+        print(
+            "fix noise size={}, c1 size={}, c2 size={}, one-hot size={}".format(fix_noise.size(), c1.size(), c2.size(),
+                                                                                one_hot.size()))
+        img_count = 1
         for epoch in range(self.epochs):
             for i, data in enumerate(dataloader):
                 # updating D
@@ -224,9 +232,10 @@ class InfoGAN(object):
                 disc_code.data.resize_(batch_size, self.disc_codes_dim)
                 cont_code.data.resize_(batch_size, self.cont_code1_dim + self.cont_code2_dim)
 
-                output = discriminator_net(real_img).view(-1)
+                shared_obj = shared_net(real_img.detach())
+                output = discriminator_net(shared_obj).view(-1)
                 d_error_real = self.criterionD(output, label)
-                d_error_real.backward()
+                d_error_real.backward(retain_graph=True)
                 d_x = output.mean().item()
 
                 # fake image input to D
@@ -237,7 +246,7 @@ class InfoGAN(object):
                 shared_nw_out = shared_net(fake_img)
                 disc_fake_output = discriminator_net(shared_nw_out).view(-1)
                 d_error_fake = self.criterionD(disc_fake_output, label)
-                d_error_fake.backward()
+                d_error_fake.backward(retain_graph=True)
 
                 d_error = d_error_real + d_error_fake
                 optimD.step()
@@ -246,14 +255,19 @@ class InfoGAN(object):
                 optimG.zero_grad()
                 label.fill_(real_label)
 
-                d_error_fake = self.criterionD(disc_fake_output, label)
+                # disc_fake_output computed above can't be used here again, since backward() has already
+                # been called upon it and has changed. so, calculate it again.
+                shared_nw_out = shared_net(fake_img)
+                disc_fake_output = discriminator_net(shared_nw_out).view(-1)
+
+                d_error_fake2 = self.criterionD(disc_fake_output, label)
                 q_logits, q_mu, q_var = recognition_net(shared_nw_out)
                 class_label = torch.LongTensor(idx).to(self.device)
                 discrete_loss = self.criterionRN_disc(q_logits, class_label)
                 cont_loss = self.criterionRN_cont(cont_code, q_mu, q_var)
 
-                g_error = d_error_fake + discrete_loss + cont_loss
-                g_error.backward()
+                g_error = d_error_fake2 + discrete_loss + cont_loss
+                g_error.backward(retain_graph=True)
                 optimG.step()
 
                 # print results and generate 100 fake images after model has seen 100 batches of data in each epoch
@@ -261,17 +275,21 @@ class InfoGAN(object):
                     print("Epoch:{}/{}\tBatch:{}/{}\tD-error:{}\tG-error:{}".
                           format(epoch, self.epochs, i, len(dataloader), d_error, g_error))
 
-                    noise.data.copy_(fix_noise)
-                    disc_code.data.copy_(torch.Tensor(one_hot))
+                    # noise.data.copy_(fix_noise)
+                    # disc_code.data.copy_(torch.Tensor(one_hot))
+                    #
+                    # cont_code.data.copy_(torch.from_numpy(c1))
+                    z = torch.cat([fix_noise, one_hot, c1], 1).view(-1, 74)  # size=(100, 74, 1, 1)
+                    print("z size: ", z.size())
+                    # z = torch.cat([noise, disc_code, cont_code], 1).view(-1, 74, 1, 1)
+                    fake_img = generator_net(z).detach()
+                    save_image(fake_img.data, '%s/image_c1_%d.png' % (img_save_filepath, img_count), nrow=10,
+                               normalize=True)
 
-                    cont_code.data.copy_(torch.from_numpy(c1))
-                    z = torch.cat([noise, disc_code, cont_code], 1).view(-1, 74, 1, 1)
-                    fake_img = generator_net(z)
-                    save_image(fake_img.data, img_save_filepath, nrow=10)
+                    # cont_code.data.copy_(torch.from_numpy(c2))
+                    z = torch.cat([fix_noise, one_hot, c2], 1).view(-1, 74)  # size=(100, 74, 1, 1)
+                    fake_img = generator_net(z).detach()
+                    save_image(fake_img.data, '%s/image_c2_%d.png' % (img_save_filepath, img_count), nrow=10,
+                               normalize=True)
 
-                    cont_code.data.copy_(torch.from_numpy(c2))
-                    z = torch.cat([noise, disc_code, cont_code], 1).view(-1, 74, 1, 1)
-                    fake_img = generator_net(z)
-                    save_image(fake_img.data, img_save_filepath, nrow=10)
-
-
+                    img_count += 1
