@@ -148,10 +148,10 @@ class LogGaussian(object):
 class InfoGAN(object):
     def __init__(self, noise_dim, disc_codes_dim, cont_code1_dim, cont_code2_dim, bs, image_size, epochs):
 
-        self.generator_net = Generator().to(self.device)
-        self.discriminator_net = Discriminator().to(self.device)
-        self.recognition_net = RecognitionNetwork().to(self.device)
-        self.shared_nw = SharedNetwork().to(self.device)
+        # generator_net = Generator().to(self.device)
+        # self.discriminator_net = Discriminator().to(self.device)
+        # recognition_net = RecognitionNetwork().to(self.device)
+        # shared_nw = SharedNetwork().to(self.device)
 
         self.bs = bs
         self.image_size = image_size
@@ -164,10 +164,6 @@ class InfoGAN(object):
         self.cont_code2_dim = cont_code2_dim
 
         self.z_dim = self.noise_dim + self.disc_codes_dim + self.cont_code1_dim + self.cont_code2_dim
-
-        # optimizers and loss functions
-        self.optimG = optim.Adam([], lr=0.001, betas=(0.5, 0.999))
-        self.optimD = optim.Adam([], lr=0.0002, betas=(0.5, 0.999))
 
         self.criterionD = nn.BCELoss()
         self.criterionRN_disc = nn.CrossEntropyLoss()
@@ -187,8 +183,14 @@ class InfoGAN(object):
 
         return z, idx, cont_code
 
-    def train(self, dataloader):
+    def train(self, dataloader, discriminator_net, generator_net, recognition_net, shared_net, img_save_filepath):
         # real_x = torch.FloatTensor(self.bs, 1, self.image_size, self.image_size).to(self.device)
+
+        # optimizers
+        optimG = optim.Adam([{'params': generator_net.parameters()}, {'params': recognition_net.parameters()}],
+                            lr=0.001, betas=(0.5, 0.999))
+        optimD = optim.Adam([{'params': discriminator_net.parameters()}, {'params': shared_net.parameters()}],
+                            lr=0.0002, betas=(0.5, 0.999))
 
         noise = torch.FloatTensor(self.bs, self.noise_dim).to(self.device)
         disc_code = torch.FloatTensor(self.bs, self.disc_codes_dim).to(self.device)
@@ -210,7 +212,7 @@ class InfoGAN(object):
         for epoch in range(self.epochs):
             for i, data in enumerate(dataloader):
                 # updating D
-                self.optimD.zero_grad()
+                optimD.zero_grad()
 
                 # real image input to D
                 real_img = data[0].to(self.device)
@@ -222,37 +224,37 @@ class InfoGAN(object):
                 disc_code.data.resize_(batch_size, self.disc_codes_dim)
                 cont_code.data.resize_(batch_size, self.cont_code1_dim + self.cont_code2_dim)
 
-                output = self.discriminator_net(real_img).view(-1)
+                output = discriminator_net(real_img).view(-1)
                 d_error_real = self.criterionD(output, label)
                 d_error_real.backward()
                 d_x = output.mean().item()
 
                 # fake image input to D
                 z, idx, cont_code = self.generate_noise_input(noise, disc_code, cont_code)
-                fake_img = self.generator_net(z)
+                fake_img = generator_net(z)
 
                 label.fill_(fake_label)
-                shared_nw_out = self.shared_nw(fake_img)
-                disc_fake_output = self.discriminator_net(shared_nw_out).view(-1)
+                shared_nw_out = shared_net(fake_img)
+                disc_fake_output = discriminator_net(shared_nw_out).view(-1)
                 d_error_fake = self.criterionD(disc_fake_output, label)
                 d_error_fake.backward()
 
                 d_error = d_error_real + d_error_fake
-                self.optimD.step()
+                optimD.step()
 
                 # updating G and Q
-                self.optimG.zero_grad()
+                optimG.zero_grad()
                 label.fill_(real_label)
 
                 d_error_fake = self.criterionD(disc_fake_output, label)
-                q_logits, q_mu, q_var = self.recognition_net(shared_nw_out)
+                q_logits, q_mu, q_var = recognition_net(shared_nw_out)
                 class_label = torch.LongTensor(idx).to(self.device)
                 discrete_loss = self.criterionRN_disc(q_logits, class_label)
                 cont_loss = self.criterionRN_cont(cont_code, q_mu, q_var)
 
                 g_error = d_error_fake + discrete_loss + cont_loss
                 g_error.backward()
-                self.optimG.step()
+                optimG.step()
 
                 # print results and generate 100 fake images after model has seen 100 batches of data in each epoch
                 if i % 100 == 0:
@@ -264,29 +266,12 @@ class InfoGAN(object):
 
                     cont_code.data.copy_(torch.from_numpy(c1))
                     z = torch.cat([noise, disc_code, cont_code], 1).view(-1, 74, 1, 1)
-                    fake_img = self.generator_net(z)
-                    save_image(fake_img.data, './tmp/c1.png', nrow=10)
+                    fake_img = generator_net(z)
+                    save_image(fake_img.data, img_save_filepath, nrow=10)
 
                     cont_code.data.copy_(torch.from_numpy(c2))
                     z = torch.cat([noise, disc_code, cont_code], 1).view(-1, 74, 1, 1)
-                    fake_img = self.generator_net(z)
-                    save_image(fake_img.data, './tmp/c2.png', nrow=10)
+                    fake_img = generator_net(z)
+                    save_image(fake_img.data, img_save_filepath, nrow=10)
 
 
-def total_parameters(model):
-    params = 0
-    for param in model.parameters():
-        params += param.numel()  # this fn returns total parameters in this specific param category
-    return params
-
-
-if __name__ == "__main__":
-    disc_net = Discriminator()
-    gen_net = Generator()
-    rn_net = RecognitionNetwork()
-    shared_nw = SharedNetwork()
-
-    disc_params = shared_nw.parameters()
-    for param in disc_params:
-        print(param.size())
-        print(param.numel())
