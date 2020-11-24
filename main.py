@@ -5,6 +5,7 @@ import utils
 if __name__ == "__main__":
     root_dir = '../Datasets'
     img_dir = '../Images'
+    wts_dir = '../Weights'
 
     # declare constants for InfoGAN training
     bs = 100
@@ -49,4 +50,5 @@ if __name__ == "__main__":
                       generator_net=gen_net,
                       recognition_net=rn_net,
                       shared_net=shared_net,
-                      img_save_filepath=img_dir)
+                      img_save_filepath=img_dir,
+                      wts_file=wts_dir)

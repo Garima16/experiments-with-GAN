@@ -186,7 +186,7 @@ class InfoGAN(object):
 
         return z, idx, cont_code
 
-    def train(self, dataloader, discriminator_net, generator_net, recognition_net, shared_net, img_save_filepath):
+    def train(self, dataloader, discriminator_net, generator_net, recognition_net, shared_net, img_save_filepath, wts_file):
         # real_x = torch.FloatTensor(self.bs, 1, self.image_size, self.image_size).to(self.device)
 
         torch.autograd.set_detect_anomaly(True)
@@ -293,3 +293,8 @@ class InfoGAN(object):
                                normalize=True)
 
                     img_count += 1
+
+            torch.save(generator_net.state_dict(), '%s/Gwts_epoch%d' % (wts_file, epoch))
+            torch.save(discriminator_net.state_dict(), '%s/Dwts_epoch%d' % (wts_file, epoch))
+            torch.save(recognition_net.state_dict(), '%s/RNwts_epoch%d' % (wts_file, epoch))
+            torch.save(shared_net.state_dict(), '%s/SNwts_epoch%d' % (wts_file, epoch))
