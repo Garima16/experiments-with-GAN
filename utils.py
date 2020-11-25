@@ -104,6 +104,18 @@ def load_wts(generator, discriminator, gen_wts_file, dis_wts_file):
     return generator, discriminator
 
 
+def load_weights(models, filepaths):
+    """
+
+    :param models: contain model's Class objects
+    :param filepaths: corr. weight files
+    :return:
+    """
+    for i in range(len(models)):
+        models[i].load_state_dict(torch.load(filepaths[i]))
+        print("Loaded weights for models.")
+
+
 def initialise_wts(generator, discriminator):
     """
     Call to initialise_weights to initialise weights of D and G.
