@@ -40,7 +40,6 @@ class Generator(nn.Module):
         )
 
     def forward(self, x):
-        print("in G, x size: ", x.size())
         fc_out = self.fc(x.float())
         fc_out = fc_out.view(-1, 128, 7, 7)
         output = self.conv(fc_out)
@@ -174,6 +173,7 @@ class InfoGAN(object):
 
     def generate_noise_input(self, noise, disc_code, cont_code):
         # generate a random integer from the range [0, 10) of size batch size
+        # this integer will be fed as input to G as one-hot code.
         idx = np.random.randint(low=10, size=self.bs)
         c = np.zeros((self.bs, self.disc_codes_dim))
         c[range(self.bs), idx] = 1.0  # create one hot encoding
@@ -186,7 +186,8 @@ class InfoGAN(object):
 
         return z, idx, cont_code
 
-    def train(self, dataloader, discriminator_net, generator_net, recognition_net, shared_net, img_save_filepath, wts_file):
+    def train(self, dataloader, discriminator_net, generator_net, recognition_net, shared_net, img_save_filepath,
+              wts_file):
         # real_x = torch.FloatTensor(self.bs, 1, self.image_size, self.image_size).to(self.device)
 
         torch.autograd.set_detect_anomaly(True)
@@ -209,14 +210,13 @@ class InfoGAN(object):
         c = np.repeat(c, 10, 0).reshape(-1, 1)
         c1 = torch.from_numpy(np.hstack([c, np.zeros_like(c)]))
         c2 = torch.from_numpy(np.hstack([np.zeros_like(c), c]))
+
+        # 10 one-hot codes for 10 classes(10 digits). Thus, attempting to generate 10 images of each of the 10 digits
         idx = np.arange(10).repeat(10)
         one_hot = torch.from_numpy(np.zeros((100, 10)))
         one_hot[range(100), idx] = 1
         fix_noise = torch.Tensor(100, self.noise_dim).uniform_(-1, 1)
-        print(
-            "fix noise size={}, c1 size={}, c2 size={}, one-hot size={}".format(fix_noise.size(), c1.size(), c2.size(),
-                                                                                one_hot.size()))
-        img_count = 1
+        img_count = 1  # iteratively increase count to name image files differently
         for epoch in range(self.epochs):
             for i, data in enumerate(dataloader):
                 # updating D
@@ -240,6 +240,8 @@ class InfoGAN(object):
 
                 # fake image input to D
                 z, idx, cont_code = self.generate_noise_input(noise, disc_code, cont_code)
+                # idx is the digit class whose discrete code is fed to G.
+                # idx will be used to calculate discrete code loss to update recognition network parameters
                 fake_img = generator_net(z)
 
                 label.fill_(fake_label)
